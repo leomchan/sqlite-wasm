@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import 'xterm/css/xterm.css';
 import { ReplaySubject } from 'rxjs';
 import { CircularProgress, Button } from '@mui/material';
-import { Range } from 'immutable';
+import { Range, List } from 'immutable';
 import _ from 'lodash';
 
 type PromiserResult = {
@@ -73,10 +73,10 @@ function App() {
                 'CREATE TABLE IF NOT EXISTS widgets (id INTEGER PRIMARY KEY, name TEXT, price REAL)'
               )
             )
-            .then(() => promiser(
-              'exec',
-              'DELETE FROM widgets' // sqlite3 does not have a TRUNCATE statement
-            ))
+            // .then(() => promiser(
+            //   'exec',
+            //   'DELETE FROM widgets' // sqlite3 does not have a TRUNCATE statement
+            // ))
             .then(() => {
               setReady(true);
             })
@@ -90,6 +90,10 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!ready) {
+      setWidgetCount(-1);
+      return;
+    }
     promiser('exec', {
       sql: 'SELECT COUNT(*) AS count FROM widgets',
       callback: (row: SQLite3RowType) => {
@@ -119,6 +123,18 @@ function App() {
     });
   };
 
+  const generateWidgetsMultiStatement = () => {
+    setGenerating(true);
+    const sql = Range(0, 100).reduce((lines, i) => {
+      return lines.push(`INSERT INTO widgets (name, price) VALUES ('Widget ${i}', ${Math.random() * 100});`);
+    }, List<string>(['BEGIN TRANSACTION;'])).push('COMMIT TRANSACTION;').join('\n');
+    promiser('exec', sql)
+      .catch(() => promiser('exec', 'ROLLBACK TRANSACTION'))
+      .finally(() => {
+        setGenerating(false);
+      });
+  };
+
   if (!ready) {
     return (
       <CircularProgress />
@@ -128,7 +144,12 @@ function App() {
   return (
     <>
       <p>Widgets: {widgetCount}</p>
+      <div>
       <Button variant="contained" onClick={generateWidgets} disabled={generating}>Generate widgets</Button>
+      </div>
+      <div>
+      <Button variant="contained" onClick={generateWidgetsMultiStatement} disabled={generating}>Generate widgets with multi statement sql</Button>
+      </div>
     </>
   )
 }

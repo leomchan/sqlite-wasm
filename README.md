@@ -9,4 +9,3 @@
 ## Worker API
 
 See [Worker 1 API](https://sqlite.org/wasm/doc/tip/api-worker1.md).
-

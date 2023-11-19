@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import 'xterm/css/xterm.css';
-import { Terminal } from 'xterm';
-import { nanoid } from 'nanoid';
 import { ReplaySubject } from 'rxjs';
+import { CircularProgress, Button } from '@mui/material';
+import { Range } from 'immutable';
+import _ from 'lodash';
 
 type PromiserResult = {
   type: string;
@@ -22,7 +23,14 @@ type PromiserConfig = {
   onunhandled?: (event: WorkerEvent) => void;
 };
 
-type PromiserFunction = (messageType: string, messageArgs: unknown[]) => Promise<PromiserResult>;
+type SQLite3RowType = {
+  type: string,
+  row: unknown,
+  rowNumber: number,
+  columnNames: string[],
+};
+
+type PromiserFunction = (messageType: string, messageArgs: unknown[] | unknown) => Promise<PromiserResult>;
 type PromiserFactory = (config: PromiserConfig) => PromiserFunction;
 
 const sqlite3$ = new ReplaySubject<string>(1);
@@ -33,10 +41,9 @@ const promiser = promiserFactory({
     sqlite3$.next('ready');
   },
   worker: new Worker('sqlite3/sqlite3-worker1.js'),
-  generateMessageId: nanoid,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   debug: (...data: any[]) => {
-    console.log(data);
+    console.log(...data);
   },
   onunhandled: (event) => {
     console.error(event);
@@ -52,27 +59,76 @@ addEventListener('unload', () => {
 });
 
 function App() {
-  const terminalRef = useRef<HTMLDivElement>(null);
-  const [terminal] = useState(new Terminal({ convertEol: true }));
+  const [ready, setReady] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [widgetCount, setWidgetCount] = useState(-1);
 
   useEffect(() => {
-    if (terminalRef.current) {
-      terminal.open(terminalRef.current);
-      terminal.write('SQLite\n');
-      const sub = sqlite3$.subscribe({
-        next: (msg) => terminal.write(msg + '\n'),
-        error: (err) => terminal.write('\x1B[1;3;31m' + err.message + '\x1B[0m\n'),
-      });
+    const sub = sqlite3$.subscribe({
+      next: (msg) => {
+        if (msg === 'ready') {
+          promiser('open', { filename: 'file:test.sqlite3?vfs=opfs'})
+            .then(() => promiser(
+                'exec',
+                'CREATE TABLE IF NOT EXISTS widgets (id INTEGER PRIMARY KEY, name TEXT, price REAL)'
+              )
+            )
+            .then(() => promiser(
+              'exec',
+              'DELETE FROM widgets' // sqlite3 does not have a TRUNCATE statement
+            ))
+            .then(() => {
+              setReady(true);
+            })
+        }
+      },
+    });
 
-      return () => {
-        sub.unsubscribe();
-      };
-    }
-  }, [terminal]);
+    return () => {
+      sub.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    promiser('exec', {
+      sql: 'SELECT COUNT(*) AS count FROM widgets',
+      callback: (row: SQLite3RowType) => {
+        if (row.rowNumber) {
+          setWidgetCount(_.get(row.row, ['0'], -1) as number);
+        }
+      },
+    });
+  }, [generating, ready]);
+
+  const generateWidgets = () => {
+    setGenerating(true);
+    Range(0, 100).reduce(async (p, i) => {
+      await p;
+      return promiser(
+        'exec',
+        {
+          sql: 'INSERT INTO widgets (name, price) VALUES (?, ?)',
+          bind: [`Widget ${i}`, Math.random() * 100],
+        }
+      );
+    }, promiser('exec', 'BEGIN TRANSACTION'))
+    .then(() => promiser('exec', 'COMMIT TRANSACTION'))
+    .catch(() => promiser('exec', 'ROLLBACK TRANSACTION'))
+    .finally(() => {
+      setGenerating(false);
+    });
+  };
+
+  if (!ready) {
+    return (
+      <CircularProgress />
+    )
+  }
 
   return (
     <>
-      <div ref={terminalRef}></div>
+      <p>Widgets: {widgetCount}</p>
+      <Button variant="contained" onClick={generateWidgets} disabled={generating}>Generate widgets</Button>
     </>
   )
 }

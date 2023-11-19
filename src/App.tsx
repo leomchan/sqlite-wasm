@@ -4,6 +4,7 @@ import { ReplaySubject } from 'rxjs';
 import { CircularProgress, Button } from '@mui/material';
 import { Range, List } from 'immutable';
 import _ from 'lodash';
+import { DateTime, Interval, Duration } from 'luxon';
 
 type PromiserResult = {
   type: string;
@@ -58,10 +59,13 @@ addEventListener('unload', () => {
   })
 });
 
+const GENERATE_SIZE = 100;
+
 function App() {
   const [ready, setReady] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [widgetCount, setWidgetCount] = useState(-1);
+  const [elapsed, setElapsed] = useState(Duration.invalid('not initialized', 'not initialized'));
 
   useEffect(() => {
     const sub = sqlite3$.subscribe({
@@ -106,7 +110,8 @@ function App() {
 
   const generateWidgets = () => {
     setGenerating(true);
-    Range(0, 100).reduce(async (p, i) => {
+    const start = DateTime.utc();
+    Range(0, GENERATE_SIZE).reduce(async (p, i) => {
       await p;
       return promiser(
         'exec',
@@ -119,18 +124,21 @@ function App() {
     .then(() => promiser('exec', 'COMMIT TRANSACTION'))
     .catch(() => promiser('exec', 'ROLLBACK TRANSACTION'))
     .finally(() => {
+      setElapsed(Interval.fromDateTimes(start, DateTime.utc()).toDuration());
       setGenerating(false);
     });
   };
 
   const generateWidgetsMultiStatement = () => {
     setGenerating(true);
-    const sql = Range(0, 100).reduce((lines, i) => {
+    const start = DateTime.utc();
+    const sql = Range(0, GENERATE_SIZE).reduce((lines, i) => {
       return lines.push(`INSERT INTO widgets (name, price) VALUES ('Widget ${i}', ${Math.random() * 100});`);
     }, List<string>(['BEGIN TRANSACTION;'])).push('COMMIT TRANSACTION;').join('\n');
     promiser('exec', sql)
       .catch(() => promiser('exec', 'ROLLBACK TRANSACTION'))
       .finally(() => {
+        setElapsed(Interval.fromDateTimes(start, DateTime.utc()).toDuration());
         setGenerating(false);
       });
   };
@@ -150,6 +158,7 @@ function App() {
       <div>
       <Button variant="contained" onClick={generateWidgetsMultiStatement} disabled={generating}>Generate widgets with multi statement sql</Button>
       </div>
+      <p>Elapsed: {elapsed.toISO()}</p>
     </>
   )
 }
